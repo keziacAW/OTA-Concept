@@ -5,7 +5,7 @@ compatibility_date = "2024-01-01"
 # KV Namespace — stores version metadata
 [[kv_namespaces]]
 binding = "OTA_METADATA"
-id = "REPLACE_WITH_YOUR_KV_ID"
+id = "a47ae8b3ea724817bacf637868e5c8a0"
 
 # R2 Bucket — stores JS bundle files
 [[r2_buckets]]
