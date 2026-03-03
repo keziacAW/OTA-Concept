@@ -2,6 +2,10 @@ name = "ota-poc"
 main = "worker.js"
 compatibility_date = "2024-01-01"
 
+# Environment variables (POC only — do not commit secrets in production)
+[vars]
+UPLOAD_SECRET_KEY = "aw-ota-secret-2025"
+
 # KV Namespace — stores version metadata
 [[kv_namespaces]]
 binding = "OTA_METADATA"
