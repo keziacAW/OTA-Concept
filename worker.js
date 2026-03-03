@@ -2,7 +2,6 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // CORS headers for all responses
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -26,7 +25,6 @@ export default {
     else
       response = new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
 
-    // Attach CORS headers to every response
     Object.entries(corsHeaders).forEach(([key, val]) => response.headers.set(key, val));
     return response;
   }
@@ -34,10 +32,6 @@ export default {
 
 /**
  * GET /check-update?appVersion=3.5.29&bundleVersion=0
- *
- * Mobile app hits this on startup to check if a new bundle is available.
- * - appVersion: the binary version of the app (from build.gradle / Info.plist)
- * - bundleVersion: the current OTA bundle version the app is running (0 = no OTA yet)
  */
 async function handleCheckUpdate(request, env) {
   const url = new URL(request.url);
@@ -54,7 +48,6 @@ async function handleCheckUpdate(request, env) {
     return Response.json({ shouldUpdate: false });
   }
 
-  // Only send update to apps that are on the targeted binary version
   const isTargeted = metadata.targetAppVersions.includes(appVersion);
   const shouldUpdate = isTargeted && currentBundleVersion < metadata.bundleVersion;
 
@@ -69,12 +62,11 @@ async function handleCheckUpdate(request, env) {
 
 /**
  * GET /download/:bundleVersion
- *
- * Returns the JS bundle zip file for the given bundle version.
+ * Returns the raw bundle.js file.
  */
 async function handleDownload(request, env) {
   const version = new URL(request.url).pathname.split('/').pop();
-  const object = await env.OTA_BUNDLES.get(`bundle-${version}.zip`);
+  const object = await env.OTA_BUNDLES.get(`bundle-${version}.js`);
 
   if (!object) {
     return Response.json({ error: `Bundle v${version} not found` }, { status: 404 });
@@ -82,22 +74,20 @@ async function handleDownload(request, env) {
 
   return new Response(object.body, {
     headers: {
-      'Content-Type': 'application/zip',
-      'Content-Disposition': `attachment; filename="bundle-${version}.zip"`,
+      'Content-Type': 'application/javascript',
+      'Content-Disposition': `attachment; filename="bundle.js"`,
     }
   });
 }
 
 /**
  * POST /upload
- * Headers: X-Upload-Key: <your-secret-key>
+ * Headers: X-Upload-Key: <secret>
  * Body (multipart form):
- *   - bundle: zip file
- *   - bundleVersion: number (e.g. "2")
+ *   - bundle: bundle.js file
+ *   - bundleVersion: number (e.g. "1")
  *   - targetAppVersions: JSON array (e.g. '["3.5.29"]')
  *   - isMandatory: "true" | "false"
- *
- * Developer hits this to push a new OTA bundle.
  */
 async function handleUpload(request, env) {
   const authKey = request.headers.get('X-Upload-Key');
@@ -115,10 +105,10 @@ async function handleUpload(request, env) {
     return Response.json({ error: 'bundle, bundleVersion, and targetAppVersions are required' }, { status: 400 });
   }
 
-  // Save bundle file to R2
-  await env.OTA_BUNDLES.put(`bundle-${bundleVersion}.zip`, bundle);
+  // Store raw bundle.js in R2
+  await env.OTA_BUNDLES.put(`bundle-${bundleVersion}.js`, bundle);
 
-  // Update current metadata in KV
+  // Update metadata in KV
   await env.OTA_METADATA.put('current', JSON.stringify({
     bundleVersion: parseInt(bundleVersion),
     targetAppVersions,
@@ -126,19 +116,12 @@ async function handleUpload(request, env) {
     releasedAt: new Date().toISOString(),
   }));
 
-  return Response.json({
-    success: true,
-    bundleVersion,
-    targetAppVersions,
-    isMandatory,
-  });
+  return Response.json({ success: true, bundleVersion, targetAppVersions, isMandatory });
 }
 
 /**
  * GET /releases
- * Headers: X-Upload-Key: <your-secret-key>
- *
- * View current release metadata (for developer use).
+ * Headers: X-Upload-Key: <secret>
  */
 async function handleListReleases(request, env) {
   const authKey = request.headers.get('X-Upload-Key');
