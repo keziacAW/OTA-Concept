@@ -22,6 +22,8 @@ export default {
       response = await handleUpload(request, env);
     else if (url.pathname === '/releases' && request.method === 'GET')
       response = await handleListReleases(request, env);
+    else if (url.pathname === '/rollback' && request.method === 'POST')
+      response = await handleRollback(request, env);
     else
       response = new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
 
@@ -117,6 +119,57 @@ async function handleUpload(request, env) {
   }));
 
   return Response.json({ success: true, bundleVersion, targetAppVersions, isMandatory });
+}
+
+/**
+ * POST /rollback
+ * Headers: X-Upload-Key: <secret>
+ * Body (JSON): { "targetBundleVersion": 1 }
+ *
+ * Rolls back to a previous bundle by copying it as a new higher version.
+ * Devices with newer buggy versions will detect the higher version and update.
+ */
+async function handleRollback(request, env) {
+  const authKey = request.headers.get('X-Upload-Key');
+  if (authKey !== env.UPLOAD_SECRET_KEY) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const { targetBundleVersion } = await request.json();
+
+  if (!targetBundleVersion) {
+    return Response.json({ error: 'targetBundleVersion is required' }, { status: 400 });
+  }
+
+  // Get the stable bundle we want to rollback to
+  const stableBundle = await env.OTA_BUNDLES.get(`bundle-${targetBundleVersion}.js`);
+  if (!stableBundle) {
+    return Response.json({ error: `Bundle v${targetBundleVersion} not found` }, { status: 404 });
+  }
+
+  // Get current metadata to determine next version number
+  const metadata = await env.OTA_METADATA.get('current', 'json');
+  const newBundleVersion = metadata ? metadata.bundleVersion + 1 : targetBundleVersion + 1;
+
+  // Copy stable bundle as new version
+  await env.OTA_BUNDLES.put(`bundle-${newBundleVersion}.js`, stableBundle.body);
+
+  // Update KV to point to new version (which contains old stable code)
+  await env.OTA_METADATA.put('current', JSON.stringify({
+    bundleVersion: newBundleVersion,
+    targetAppVersions: metadata?.targetAppVersions || [],
+    isMandatory: true,
+    rolledBackFrom: metadata?.bundleVersion,
+    rolledBackTo: targetBundleVersion,
+    releasedAt: new Date().toISOString(),
+  }));
+
+  return Response.json({
+    success: true,
+    newBundleVersion,
+    rolledBackTo: targetBundleVersion,
+    message: `Rolled back to v${targetBundleVersion} content, deployed as v${newBundleVersion}`,
+  });
 }
 
 /**
